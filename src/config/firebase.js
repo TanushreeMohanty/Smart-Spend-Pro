@@ -3,17 +3,19 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyC7W9wsGg8pXLwgTJwyQN5WtTzVsBgjoko",
-  authDomain: "pro-spendsmart.firebaseapp.com",
-  projectId: "pro-spendsmart",
-  storageBucket: "pro-spendsmart.firebasestorage.app",
-  messagingSenderId: "946184131496",
-  appId: "1:946184131496:web:49718a1741aaabc080039d",
-  measurementId: "G-CDL8VZQ91F"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 export const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const appId = "smartspend-pro-v1";
-export const geminiKey = "AIzaSyAlrHMriTgzE2OwKO26XmQ47u5qK6yfJCU"; // 🔴 PASTE GEMINI KEY (Optional)
+
+// Custom Exports
+export const appId = import.meta.env.VITE_APP_IDENTIFIER;
+export const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;

@@ -203,18 +203,42 @@ export default function App() {
       setSavingSettings(false);
   };
 
-  const generateAI = async () => {
+const generateAI = async () => {
     setAiLoading(true);
     setAiInsight(null);
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${geminiKey}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: `Act as a financial advisor. Data: Income ₹${totals.income}, Expenses ₹${totals.expenses}. Give 3 short bullet points: Observation, Advice, Tip. Use Markdown formatting.` }] }] })
-      });
-      const data = await res.json();
-      setAiInsight(data.candidates?.[0]?.content?.parts?.[0]?.text || "No response");
-    } catch(e) { setAiInsight("AI Error: Check API Key"); }
-    finally { setAiLoading(false); }
+      // ✅ FIX 1: Use 'v1' (Stable) instead of 'v1beta'
+      // ✅ FIX 2: Use specific version 'gemini-1.5-flash-001'
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-001:generateContent?key=${geminiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: `Act as a financial advisor. Data: Income ₹${totals.income}, Expenses ₹${totals.expenses}. Give 3 short bullet points: Observation, Advice, Tip. Use Markdown formatting.`
+              }]
+            }]
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (data.error) {
+        console.error("Gemini API Error:", data.error);
+        // Fallback message if 001 also fails
+        setAiInsight(`Error: ${data.error.message}. Try using 'gemini-pro' instead.`);
+      } else {
+        setAiInsight(data.candidates?.[0]?.content?.parts?.[0]?.text || "No response");
+      }
+    } catch (e) {
+      console.error("Network Error:", e);
+      setAiInsight("Connection Error: Check console for details.");
+    } finally {
+      setAiLoading(false);
+    }
   };
 
   // --- Derived State ---
