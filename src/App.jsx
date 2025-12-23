@@ -4,8 +4,8 @@ import { collection, addDoc, setDoc, getDoc, getDocs, onSnapshot, deleteDoc, doc
 import { 
   Home, ListFilter, Plus, ClipboardCheck, PieChart, Landmark, User, LogOut, 
   Pin, PinOff, ArrowDown, ArrowUp, UploadCloud, Loader2, Target, IndianRupee, 
-  Bot, Sparkles, Receipt, Copy, Edit3, X, AlertTriangle 
-} from 'lucide-react'; // ✅ FIXED: Added AlertTriangle here
+  Bot, Sparkles, Receipt, Copy, Edit3, X, AlertTriangle, Search, ArrowUpDown 
+} from 'lucide-react';
 
 // --- Internal Imports ---
 import { auth, db, appId, geminiKey } from './config/firebase';
@@ -40,6 +40,12 @@ export default function App() {
   const [type, setType] = useState('expense');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
+  // History Filters (Logic Added)
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [sortBy, setSortBy] = useState('date-desc');
+
   // Wealth Form
   const [wealthName, setWealthName] = useState('');
   const [wealthAmount, setWealthAmount] = useState('');
@@ -75,7 +81,6 @@ export default function App() {
     // Transactions Sync
     const q = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
     const unsubT = onSnapshot(q, (snap) => {
-      // ✅ Fix: Put id: d.id at the END so it overwrites any bad IDs inside the data
       const data = snap.docs.map(d => ({ ...d.data(), id: d.id })).sort((a,b) => (b.date?.seconds||0) - (a.date?.seconds||0));
       setTransactions(data);
     }, (err) => console.error("Firestore Error (Transactions):", err));
@@ -106,37 +111,24 @@ export default function App() {
   const handleGuest = async () => { try { await signInAnonymously(auth); } catch(e) { setAuthError(e.message); } };
   const handleSignOut = () => { if(confirm("Sign out?")) signOut(auth); };
 
-  // ⚠️ DANGER: Wipes all user data
   const handleResetData = async () => {
-    if (!window.confirm("⚠️ DANGER ZONE ⚠️\n\nAre you sure you want to delete ALL your transactions, assets, and settings?\n\nThis action CANNOT be undone.")) {
-        return;
-    }
-    
-    // Double confirmation to be safe
-    if (!window.confirm("Final Confirmation: This will wipe your account clean. Click OK to proceed.")) {
-        return;
-    }
+    if (!window.confirm("⚠️ DANGER ZONE ⚠️\n\nAre you sure you want to delete ALL your transactions, assets, and settings?\n\nThis action CANNOT be undone.")) return;
+    if (!window.confirm("Final Confirmation: This will wipe your account clean. Click OK to proceed.")) return;
 
-    setIsSubmitting(true); // Show loading state
+    setIsSubmitting(true);
     try {
-      // 1. Fetch all data references
       const transRef = collection(db, 'artifacts', appId, 'users', user.uid, 'transactions');
       const wealthRef = collection(db, 'artifacts', appId, 'users', user.uid, 'wealth');
       const settingsRef = doc(db, 'artifacts', appId, 'users', user.uid, 'settings', 'preferences');
 
       const [tSnap, wSnap] = await Promise.all([getDocs(transRef), getDocs(wealthRef)]);
-
-      // 2. Queue up all deletions
       const deletePromises = [
         ...tSnap.docs.map(d => deleteDoc(d.ref)),
         ...wSnap.docs.map(d => deleteDoc(d.ref)),
         deleteDoc(settingsRef)
       ];
-
-      // 3. Execute deletions
       await Promise.all(deletePromises);
 
-      // 4. Reset Local State
       setTransactions([]);
       setWealthItems([]);
       setParsedTransactions([]);
@@ -144,10 +136,10 @@ export default function App() {
       setProfileUnits({ monthlyIncome: 1, monthlyBudget: 1, dailyBudget: 1 });
       setTaxProfile({ annualRent: '', annualEPF: '', healthInsurance: '' });
 
-      alert("Account reset complete. You have a fresh start.");
+      alert("Account reset complete.");
     } catch (e) {
       console.error(e);
-      alert("Error resetting data. Check console.");
+      alert("Error resetting data.");
     } finally {
       setIsSubmitting(false);
     }
@@ -190,16 +182,10 @@ export default function App() {
   const saveBulk = async () => {
     const batch = writeBatch(db);
     parsedTransactions.forEach(t => {
-      // 1. Create a reference for a new document
       const docRef = doc(collection(db, 'artifacts', appId, 'users', user.uid, 'transactions'));
-      
-      // 2. Remove the temporary 'id' from the object before saving
       const { id, ...cleanData } = t; 
-
-      // 3. Save only the clean data
       batch.set(docRef, { ...cleanData, date: t.date });
     });
-    
     await batch.commit();
     setParsedTransactions([]); 
     setActiveTab(TABS.HOME);
@@ -219,7 +205,7 @@ export default function App() {
 
   const generateAI = async () => {
     setAiLoading(true);
-    setAiInsight(null); // Clear previous
+    setAiInsight(null);
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${geminiKey}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -235,6 +221,31 @@ export default function App() {
   const totals = useMemo(() => transactions.reduce((acc, t) => ({ ...acc, [t.type === 'income' ? 'income' : 'expenses']: acc[t.type === 'income' ? 'income' : 'expenses'] + parseFloat(t.amount) }), { income: 0, expenses: 0 }), [transactions]);
   const netWorth = useMemo(() => wealthItems.reduce((acc, t) => acc + (t.type === 'asset' ? 1 : -1) * parseFloat(t.amount), 0), [wealthItems]);
   const taxData = useMemo(() => calculateTaxData(transactions, taxProfile), [transactions, taxProfile]);
+
+  // --- Filter Logic ---
+  const filteredTransactions = useMemo(() => {
+    let data = [...transactions];
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      data = data.filter(t => t.description.toLowerCase().includes(term) || t.amount.toString().includes(term));
+    }
+    if (filterType !== 'all') data = data.filter(t => t.type === filterType);
+    if (filterCategory !== 'all') data = data.filter(t => t.category === filterCategory);
+    
+    // Sorting
+    data.sort((a, b) => {
+        const dateA = a.date?.seconds || 0;
+        const dateB = b.date?.seconds || 0;
+        const amtA = parseFloat(a.amount);
+        const amtB = parseFloat(b.amount);
+        if (sortBy === 'date-desc') return dateB - dateA;
+        if (sortBy === 'date-asc') return dateA - dateB;
+        if (sortBy === 'amount-desc') return amtB - amtA;
+        if (sortBy === 'amount-asc') return amtA - amtB;
+        return 0;
+    });
+    return data;
+  }, [transactions, searchTerm, filterType, filterCategory, sortBy]);
 
   if (loading) return <Loading />;
   if (!user) return <LoginScreen onLoginGoogle={handleLogin} onGuest={handleGuest} error={authError} />;
@@ -323,81 +334,135 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {/* ... KEEP THE REST OF YOUR TABS (HISTORY, ADD, ETC.) EXACTLY THE SAME AS BEFORE ... */}
-        {/* Just paste the content of the other tabs here from your previous file */}
         
         {activeTab === TABS.ADD && (
-           /* ... Paste ADD tab content ... */
            <div className="max-w-2xl mx-auto">
-              {/* ... existing ADD code ... */}
-              <div className="bg-white/5 p-1 rounded-2xl flex mb-8 border border-white/10">
-                <button onClick={() => setAddMode('manual')} className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all ${addMode==='manual'?'bg-blue-600 text-white shadow-lg':'text-slate-400 hover:text-white'}`}>Manual Entry</button>
-                <button onClick={() => setAddMode('upload')} className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all ${addMode==='upload'?'bg-blue-600 text-white shadow-lg':'text-slate-400 hover:text-white'}`}>Upload Statement</button>
-              </div>
-              {/* ... form logic ... */}
-              {addMode === 'manual' ? (
-                <form onSubmit={addTransaction} className="space-y-6 bg-white/5 p-8 rounded-[2rem] border border-white/10">
-                  <div className="text-center">
-                    <label className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-2 block">Amount</label>
-                    <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} className="bg-transparent text-6xl font-black text-white text-center w-full outline-none placeholder-white/10" placeholder="0" autoFocus />
-                    <UnitSelector currentUnit={transUnit} onSelect={setTransUnit} className="mt-4 max-w-[240px] mx-auto" />
-                  </div>
-                  
-                  <div className="grid grid-cols-4 md:grid-cols-5 gap-3">
-                    {CATEGORIES.map(c => <button key={c.id} type="button" onClick={()=>setCategory(c.id)} className={`p-3 rounded-2xl border flex flex-col items-center gap-2 transition-all ${category===c.id?'bg-white/10 border-cyan-500/50 text-white scale-105 shadow-xl':'border-white/5 text-slate-500 hover:bg-white/5'}`}><c.icon className="w-6 h-6"/><span className="text-[10px] font-bold uppercase">{c.name}</span></button>)}
-                  </div>
-                  
-                  <div className="space-y-4">
-                    <input type="text" value={description} onChange={e=>setDescription(e.target.value)} placeholder="What was this for?" className="w-full bg-black/20 border border-white/10 p-5 rounded-2xl text-white outline-none focus:border-cyan-500/50 transition-colors" />
-                    <div className="flex gap-3">
-                      <button type="button" onClick={()=>setType('expense')} className={`flex-1 p-5 rounded-2xl font-bold border transition-all ${type==='expense'?'bg-rose-500/20 border-rose-500/50 text-rose-200':'bg-black/20 border-transparent text-slate-500'}`}>Expense</button>
-                      <button type="button" onClick={()=>setType('income')} className={`flex-1 p-5 rounded-2xl font-bold border transition-all ${type==='income'?'bg-emerald-500/20 border-emerald-500/50 text-emerald-200':'bg-black/20 border-transparent text-slate-500'}`}>Income</button>
-                    </div>
-                  </div>
-                  
-                  <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 p-5 rounded-2xl text-white font-bold text-lg shadow-xl hover:shadow-cyan-500/20 transition-all active:scale-[0.98]">{isSubmitting ? 'Saving...' : 'Save Transaction'}</button>
-                </form>
-              ) : (
-                <div className="space-y-6">
-                  <div className="text-center border-4 border-dashed border-white/10 rounded-[3rem] p-16 cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => fileInputRef.current.click()}>
-                    <div className="w-20 h-20 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
-                      <UploadCloud className="w-10 h-10 text-blue-400" />
-                    </div>
-                    <h3 className="text-2xl font-bold text-white mb-2">Upload Bank Statement</h3>
-                    <p className="text-slate-400 max-w-xs mx-auto">Supports PDF and CSV. We'll automatically categorize your spending.</p>
-                    <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => handleFileUpload(e.target.files[0])} />
-                  </div>
+             <div className="bg-white/5 p-1 rounded-2xl flex mb-8 border border-white/10">
+               <button onClick={() => setAddMode('manual')} className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all ${addMode==='manual'?'bg-blue-600 text-white shadow-lg':'text-slate-400 hover:text-white'}`}>Manual Entry</button>
+               <button onClick={() => setAddMode('upload')} className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all ${addMode==='upload'?'bg-blue-600 text-white shadow-lg':'text-slate-400 hover:text-white'}`}>Upload Statement</button>
+             </div>
+             {addMode === 'manual' ? (
+               <form onSubmit={addTransaction} className="space-y-6 bg-white/5 p-8 rounded-[2rem] border border-white/10">
+                 <div className="text-center">
+                   <label className="text-slate-500 text-xs font-bold uppercase tracking-widest mb-2 block">Amount</label>
+                   {/* FIXED: Added min="0" and strict validation on change */}
+                   <input 
+                      type="number" 
+                      min="0"
+                      value={amount} 
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (parseFloat(val) < 0) return;
+                        setAmount(val);
+                      }} 
+                      className="bg-transparent text-6xl font-black text-white text-center w-full outline-none placeholder-white/10" 
+                      placeholder="0" 
+                      autoFocus 
+                   />
+                   <UnitSelector currentUnit={transUnit} onSelect={setTransUnit} className="mt-4 max-w-[240px] mx-auto" />
+                 </div>
+                 
+                 <div className="grid grid-cols-4 md:grid-cols-5 gap-3">
+                   {CATEGORIES.map(c => <button key={c.id} type="button" onClick={()=>setCategory(c.id)} className={`p-3 rounded-2xl border flex flex-col items-center gap-2 transition-all ${category===c.id?'bg-white/10 border-cyan-500/50 text-white scale-105 shadow-xl':'border-white/5 text-slate-500 hover:bg-white/5'}`}><c.icon className="w-6 h-6"/><span className="text-[10px] font-bold uppercase">{c.name}</span></button>)}
+                 </div>
+                 
+                 <div className="space-y-4">
+                   <input type="text" value={description} onChange={e=>setDescription(e.target.value)} placeholder="What was this for?" className="w-full bg-black/20 border border-white/10 p-5 rounded-2xl text-white outline-none focus:border-cyan-500/50 transition-colors" />
+                   <div className="flex gap-3">
+                     <button type="button" onClick={()=>setType('expense')} className={`flex-1 p-5 rounded-2xl font-bold border transition-all ${type==='expense'?'bg-rose-500/20 border-rose-500/50 text-rose-200':'bg-black/20 border-transparent text-slate-500'}`}>Expense</button>
+                     <button type="button" onClick={()=>setType('income')} className={`flex-1 p-5 rounded-2xl font-bold border transition-all ${type==='income'?'bg-emerald-500/20 border-emerald-500/50 text-emerald-200':'bg-black/20 border-transparent text-slate-500'}`}>Income</button>
+                   </div>
+                 </div>
+                 
+                 <button type="submit" disabled={isSubmitting} className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 p-5 rounded-2xl text-white font-bold text-lg shadow-xl hover:shadow-cyan-500/20 transition-all active:scale-[0.98]">{isSubmitting ? 'Saving...' : 'Save Transaction'}</button>
+               </form>
+             ) : (
+               <div className="space-y-6">
+                 <div className="text-center border-4 border-dashed border-white/10 rounded-[3rem] p-16 cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => fileInputRef.current.click()}>
+                   <div className="w-20 h-20 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform">
+                     <UploadCloud className="w-10 h-10 text-blue-400" />
+                   </div>
+                   <h3 className="text-2xl font-bold text-white mb-2">Upload Bank Statement</h3>
+                   <p className="text-slate-400 max-w-xs mx-auto">Supports PDF and CSV. We'll automatically categorize your spending.</p>
+                   <input type="file" ref={fileInputRef} className="hidden" onChange={(e) => handleFileUpload(e.target.files[0])} />
+                 </div>
 
-                  {parsedTransactions.length > 0 && (
-                    <div className="animate-in slide-in-from-bottom-4">
-                      <div className="flex justify-between items-center mb-4 px-2">
-                          <h3 className="font-bold text-white">Review ({parsedTransactions.length})</h3>
-                          <button onClick={() => setParsedTransactions([])} className="text-xs text-rose-400 hover:underline">Clear All</button>
-                      </div>
-                      <div className="max-h-[400px] overflow-y-auto space-y-2 mb-4 pr-1">
-                          {parsedTransactions.map((t, idx) => (
-                              <TransactionItem 
-                                  key={t.id || idx} 
-                                  item={t} 
-                                  onDelete={() => removeParsedItem(t.id)} 
-                              />
-                          ))}
-                      </div>
-                      <button onClick={saveBulk} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold shadow-lg transition-all">
-                          Confirm Import ({parsedTransactions.length} Items)
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
+                 {parsedTransactions.length > 0 && (
+                   <div className="animate-in slide-in-from-bottom-4">
+                     <div className="flex justify-between items-center mb-4 px-2">
+                         <h3 className="font-bold text-white">Review ({parsedTransactions.length})</h3>
+                         <button onClick={() => setParsedTransactions([])} className="text-xs text-rose-400 hover:underline">Clear All</button>
+                     </div>
+                     <div className="max-h-[400px] overflow-y-auto space-y-2 mb-4 pr-1">
+                         {parsedTransactions.map((t, idx) => (
+                             <TransactionItem 
+                                 key={t.id || idx} 
+                                 item={t} 
+                                 onDelete={() => removeParsedItem(t.id)} 
+                             />
+                         ))}
+                     </div>
+                     <button onClick={saveBulk} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold shadow-lg transition-all">
+                         Confirm Import ({parsedTransactions.length} Items)
+                     </button>
+                   </div>
+                 )}
+               </div>
+             )}
            </div>
         )}
 
+        {/* FIXED: History Filters Implemented */}
         {activeTab === TABS.HISTORY && (
-          <div className="space-y-4 pb-24">
-            <h3 className="font-bold text-white">History</h3>
-            {transactions.map(t => <TransactionItem key={t.id} item={t} />)}
+          <div className="space-y-6 pb-24">
+            <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold text-white">History</h2>
+                <div className="flex gap-2">
+                    <button onClick={() => setSortBy(s => s === 'date-desc' ? 'date-asc' : 'date-desc')} className="p-2 bg-white/5 rounded-full border border-white/10 text-slate-400">
+                        <ArrowUpDown className="w-5 h-5"/>
+                    </button>
+                </div>
+            </div>
+
+            {/* Filter UI */}
+            <div className="sticky top-0 bg-slate-950/90 backdrop-blur-md z-30 py-4 -mx-2 px-2 space-y-3">
+                <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 w-4 h-4" />
+                    <input 
+                        type="text" 
+                        placeholder="Search..." 
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 pl-10 pr-4 py-3 rounded-xl text-white outline-none focus:border-cyan-500/50"
+                    />
+                </div>
+                <div className="flex gap-2 overflow-x-auto no-scrollbar">
+                    {['all', 'expense', 'income'].map(ft => (
+                        <button 
+                            key={ft}
+                            onClick={() => setFilterType(ft)}
+                            className={`px-4 py-2 rounded-full text-xs font-bold capitalize whitespace-nowrap border ${filterType === ft ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' : 'bg-white/5 text-slate-400 border-white/5'}`}
+                        >
+                            {ft}
+                        </button>
+                    ))}
+                     <select 
+                        value={filterCategory} 
+                        onChange={(e) => setFilterCategory(e.target.value)}
+                        className="bg-white/5 border border-white/10 text-slate-400 text-xs rounded-full px-4 py-2 outline-none"
+                    >
+                        <option value="all">All Cats</option>
+                        {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                </div>
+            </div>
+            
+            {/* List */}
+            {filteredTransactions.length === 0 ? (
+                <div className="text-center py-20 text-slate-500">No transactions found.</div>
+            ) : (
+                filteredTransactions.map(t => <TransactionItem key={t.id} item={t} onDelete={(id) => deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'transactions', id))} />)
+            )}
           </div>
         )}
 
@@ -430,8 +495,6 @@ export default function App() {
 
         {activeTab === TABS.AUDIT && (
           <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4">
-            
-            {/* Header Section */}
             <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">
               <div>
                 <h2 className="text-3xl font-bold text-white mb-2">Tax Scout</h2>
@@ -452,11 +515,8 @@ export default function App() {
                 </button>
               </div>
             </div>
-
-            {/* Main Cards Grid */}
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Card 1: Taxable Income */}
               <div className="bg-gradient-to-br from-white/5 to-white/[0.02] p-8 rounded-[2rem] border border-white/10 shadow-xl relative overflow-hidden group hover:border-white/20 transition-all">
                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                   <Receipt className="w-24 h-24 text-white" />
@@ -472,7 +532,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Card 2: 80C Investments */}
               <div className="bg-white/5 p-8 rounded-[2rem] border border-white/10 shadow-xl flex flex-col justify-center">
                 <div className="flex justify-between items-end mb-2">
                   <span className="text-slate-400 text-xs uppercase tracking-wider font-bold">Sec 80C Investments</span>
@@ -486,7 +545,6 @@ export default function App() {
                   <span className="text-slate-500 font-medium">/ 1.5L Limit</span>
                 </div>
 
-                {/* Progress Bar */}
                 <div className="h-4 bg-black/40 rounded-full overflow-hidden border border-white/5 p-0.5">
                   <div 
                     className="h-full bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full transition-all duration-1000 ease-out" 
@@ -499,11 +557,8 @@ export default function App() {
               </div>
             </div>
 
-            {/* Copy Report Button */}
-            {/* Note: Ensure handleCopyReport function exists in your logic section */}
             <button 
               onClick={() => {
-                  // Quick inline handler if the main one is missing
                   const report = `Tax Report FY ${taxData.fiscalYear}\nIncome: ₹${taxData.totalIncome}\nTaxable: ₹${taxData.taxableIncome}\n80C: ₹${taxData.investments80C}`;
                   navigator.clipboard.writeText(report);
                   alert("Report copied!");
@@ -515,7 +570,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Tax Wizard Modal */}
         {showTaxWizard && (
           <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
             <div className="bg-[#0f0c29] w-full max-w-md rounded-[2.5rem] p-8 border border-white/20 shadow-2xl relative animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">

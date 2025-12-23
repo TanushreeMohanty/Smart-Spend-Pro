@@ -1,3 +1,14 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 1. Chrome, Safari, Opera */
+.no-scrollbar::-webkit-scrollbar {
+    display: none;
+}
+
+/* 2. Firefox, IE, Edge */
+.no-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
