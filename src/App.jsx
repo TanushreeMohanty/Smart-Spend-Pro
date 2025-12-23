@@ -207,37 +207,32 @@ const generateAI = async () => {
     setAiLoading(true);
     setAiInsight(null);
     try {
-      // ✅ FIX 1: Use 'v1' (Stable) instead of 'v1beta'
-      // ✅ FIX 2: Use specific version 'gemini-1.5-flash-001'
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-001:generateContent?key=${geminiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: `Act as a financial advisor. Data: Income ₹${totals.income}, Expenses ₹${totals.expenses}. Give 3 short bullet points: Observation, Advice, Tip. Use Markdown formatting.`
-              }]
-            }]
-          })
-        }
-      );
-
-      const data = await response.json();
-
+      // ✅ FIX: Switched to the universally supported 'gemini-pro' model
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiKey}`, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            contents: [{ 
+                parts: [{ 
+                    text: `Act as a financial advisor. Data: Income ₹${totals.income}, Expenses ₹${totals.expenses}. Give 3 short bullet points: Observation, Advice, Tip. Use Markdown formatting.` 
+                }] 
+            }] 
+        })
+      });
+      
+      const data = await res.json();
+      
       if (data.error) {
-        console.error("Gemini API Error:", data.error);
-        // Fallback message if 001 also fails
-        setAiInsight(`Error: ${data.error.message}. Try using 'gemini-pro' instead.`);
+          console.error("Gemini API Error:", data.error);
+          setAiInsight(`Error: ${data.error.message}`);
       } else {
-        setAiInsight(data.candidates?.[0]?.content?.parts?.[0]?.text || "No response");
+          setAiInsight(data.candidates?.[0]?.content?.parts?.[0]?.text || "No response");
       }
-    } catch (e) {
-      console.error("Network Error:", e);
-      setAiInsight("Connection Error: Check console for details.");
-    } finally {
-      setAiLoading(false);
+    } catch(e) { 
+        console.error("Network Error:", e);
+        setAiInsight("Connection Error: Check console for details."); 
+    } finally { 
+        setAiLoading(false); 
     }
   };
 
